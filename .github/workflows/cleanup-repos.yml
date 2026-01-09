@@ -1,0 +1,163 @@
+# Support Repo Lifecycle Manager (SRLM)
+
+Automated GitHub Actions workflow that identifies and deletes inactive support reproduction repositories based on naming conventions and activity patterns.
+
+## Overview
+
+This workflow automatically deletes repositories that:
+- Have names starting with **at least 7 digits** (e.g., `1234567-customer-issue`)
+- Show **no activity for more than 14 days** across commits, issues, and pull requests
+
+## Setup Instructions
+
+### 1. Create a GitHub Token
+
+You'll need a GitHub token with appropriate permissions. Choose one option:
+
+#### Option A: Fine-Grained Personal Access Token (Recommended)
+1. Go to GitHub Settings → Developer settings → Personal access tokens → Fine-grained tokens
+2. Click "Generate new token"
+3. Configure:
+   - **Resource owner**: Select your organization
+   - **Repository access**: All repositories
+   - **Permissions**:
+     - Repository permissions:
+       - Administration: **Read and write**
+       - Metadata: **Read**
+     - Organization permissions:
+       - Administration: **Read**
+
+#### Option B: GitHub App
+1. Create a GitHub App with the same permissions as above
+2. Install it on your organization
+3. Generate an installation token
+
+### 2. Add Token as a Secret
+
+1. Navigate to your repository settings
+2. Go to **Secrets and variables** → **Actions**
+3. Click **New repository secret**
+4. Name: `SRLM_TOKEN`
+5. Value: Paste your token
+6. Click **Add secret**
+
+### 3. Configure Organization Variable
+
+For each organization you want to monitor:
+
+1. Go to repository **Settings** → **Secrets and variables** → **Actions** → **Variables** tab
+2. Click **New repository variable**
+3. Name: `SRLM_ORG`
+4. Value: Your organization name (e.g., `my-company`)
+5. Click **Add variable**
+
+**For multiple organizations**: Deploy this workflow to separate repositories, each configured with a different `SRLM_ORG` variable.
+
+### 4. Commit and Push
+
+```bash
+git add .github/workflows/cleanup-support-repos.yml
+git commit -m "Add Support Repo Lifecycle Manager workflow"
+git push
+```
+
+## How It Works
+
+### Execution Schedule
+- Runs automatically every day at **00:00 UTC**
+- Uses GitHub Actions cron trigger
+
+### Repository Detection
+1. Fetches all repositories in the configured organization
+2. Filters for names matching pattern: `^\d{7}` (starts with 7+ digits)
+
+### Activity Check
+For each matching repository, checks for activity in the last 14 days:
+- **Commits**: Any new commits, branch creation, or tags
+- **Issues**: New issues, comments, labels, or state changes
+- **Pull Requests**: New PRs, comments, reviews, or commits
+
+### Deletion Logic
+- If **no activity** is detected across all categories: Repository is **deleted**
+- If **any activity** is found: Repository is **preserved**
+
+### Logging
+- All actions are logged in the GitHub Actions run output
+- Deleted repositories include last activity date and type
+- Summary report shows total scanned, active, and deleted counts
+
+## Recovery
+
+Deleted repositories can be restored within **90 days**:
+
+1. Go to your organization settings
+2. Navigate to **Deleted repositories**
+3. Find the repository and click **Restore**
+
+## Monitoring
+
+### View Execution Logs
+1. Go to the **Actions** tab in this repository
+2. Click on "Support Repo Lifecycle Manager"
+3. Select the latest run to view detailed logs
+
+### Audit Trail
+GitHub maintains an audit log for repository deletions:
+- Organization settings → Audit log
+- Filter by action: `repo.destroy`
+
+## Configuration
+
+### Modify Inactivity Threshold
+Edit the workflow file and change:
+```yaml
+const INACTIVITY_THRESHOLD_DAYS = 14;
+```
+
+### Adjust Name Pattern
+Edit the workflow file and change:
+```yaml
+const REPO_NAME_PATTERN = /^\d{7}/;
+```
+
+### Change Schedule
+Edit the cron expression:
+```yaml
+on:
+  schedule:
+    - cron: '0 0 * * *'  # Daily at midnight UTC
+```
+
+Example schedules:
+- `0 */12 * * *` - Every 12 hours
+- `0 0 * * 1` - Every Monday at midnight
+- `0 2 * * *` - Daily at 2:00 AM UTC
+
+## Troubleshooting
+
+### Workflow isn't running
+- Verify the cron schedule syntax
+- Check that the workflow file is in the default branch
+- Ensure Actions are enabled for the repository
+
+### Permission errors
+- Verify `SRLM_TOKEN` has correct permissions
+- Check token hasn't expired
+- Ensure token has access to the organization
+
+### Repositories not being detected
+- Verify repository names start with at least 7 consecutive digits
+- Check `SRLM_ORG` variable is set correctly
+- Review workflow logs for filtering results
+
+## Security Considerations
+
+- The `SRLM_TOKEN` has organization-wide repository deletion rights
+- Limit workflow execution to trusted users
+- Regularly audit deleted repositories
+- Consider using GitHub App tokens for better security and auditing
+- Repository naming convention provides safety against accidental deletion
+
+## Support
+
+For issues or questions, review the workflow execution logs in the Actions tab for detailed information about each run.
