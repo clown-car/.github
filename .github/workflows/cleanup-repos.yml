@@ -4,7 +4,7 @@ on:
   schedule:
     # Run daily at 00:00 UTC
     - cron: '0 0 * * *'
-  workflow_dispatch:
+  workflow_dispatch: {}
 
 jobs:
   cleanup-repos:
@@ -24,6 +24,12 @@ jobs:
             const org = '${{ vars.SRLM_ORG }}';
             const isManualRun = '${{ github.event_name }}' === 'workflow_dispatch';
             
+            // Validate organization variable
+            if (!org || org.trim() === '') {
+              core.setFailed('❌ SRLM_ORG variable is not set. Please add it in repository settings > Variables.');
+              return;
+            }
+            
             // Calculate cutoff date (14 days ago from now)
             const cutoffDate = new Date();
             cutoffDate.setDate(cutoffDate.getDate() - INACTIVITY_THRESHOLD_DAYS);
@@ -37,11 +43,17 @@ jobs:
             console.log('─'.repeat(80));
             
             // Fetch all repositories in the organization
-            const repos = await github.paginate(github.rest.repos.listForOrg, {
-              org: org,
-              type: 'all',
-              per_page: 100
-            });
+            let repos;
+            try {
+              repos = await github.paginate(github.rest.repos.listForOrg, {
+                org: org,
+                type: 'all',
+                per_page: 100
+              });
+            } catch (error) {
+              core.setFailed(`❌ Failed to access organization "${org}". Error: ${error.message}\n\nPossible causes:\n- Organization name is incorrect\n- Token doesn't have access to this organization\n- Token lacks required permissions (Administration: Read)`);
+              return;
+            }
             
             console.log(`📦 Found ${repos.length} total repositories in ${org}`);
             
