@@ -1,163 +1,205 @@
-# Support Repo Lifecycle Manager (SRLM)
+name: Support Repo Lifecycle Manager
 
-Automated GitHub Actions workflow that identifies and deletes inactive support reproduction repositories based on naming conventions and activity patterns.
-
-## Overview
-
-This workflow automatically deletes repositories that:
-- Have names starting with **at least 7 digits** (e.g., `1234567-customer-issue`)
-- Show **no activity for more than 14 days** across commits, issues, and pull requests
-
-## Setup Instructions
-
-### 1. Create a GitHub Token
-
-You'll need a GitHub token with appropriate permissions. Choose one option:
-
-#### Option A: Fine-Grained Personal Access Token (Recommended)
-1. Go to GitHub Settings → Developer settings → Personal access tokens → Fine-grained tokens
-2. Click "Generate new token"
-3. Configure:
-   - **Resource owner**: Select your organization
-   - **Repository access**: All repositories
-   - **Permissions**:
-     - Repository permissions:
-       - Administration: **Read and write**
-       - Metadata: **Read**
-     - Organization permissions:
-       - Administration: **Read**
-
-#### Option B: GitHub App
-1. Create a GitHub App with the same permissions as above
-2. Install it on your organization
-3. Generate an installation token
-
-### 2. Add Token as a Secret
-
-1. Navigate to your repository settings
-2. Go to **Secrets and variables** → **Actions**
-3. Click **New repository secret**
-4. Name: `SRLM_TOKEN`
-5. Value: Paste your token
-6. Click **Add secret**
-
-### 3. Configure Organization Variable
-
-For each organization you want to monitor:
-
-1. Go to repository **Settings** → **Secrets and variables** → **Actions** → **Variables** tab
-2. Click **New repository variable**
-3. Name: `SRLM_ORG`
-4. Value: Your organization name (e.g., `my-company`)
-5. Click **Add variable**
-
-**For multiple organizations**: Deploy this workflow to separate repositories, each configured with a different `SRLM_ORG` variable.
-
-### 4. Commit and Push
-
-```bash
-git add .github/workflows/cleanup-support-repos.yml
-git commit -m "Add Support Repo Lifecycle Manager workflow"
-git push
-```
-
-## How It Works
-
-### Execution Schedule
-- Runs automatically every day at **00:00 UTC**
-- Uses GitHub Actions cron trigger
-
-### Repository Detection
-1. Fetches all repositories in the configured organization
-2. Filters for names matching pattern: `^\d{7}` (starts with 7+ digits)
-
-### Activity Check
-For each matching repository, checks for activity in the last 14 days:
-- **Commits**: Any new commits, branch creation, or tags
-- **Issues**: New issues, comments, labels, or state changes
-- **Pull Requests**: New PRs, comments, reviews, or commits
-
-### Deletion Logic
-- If **no activity** is detected across all categories: Repository is **deleted**
-- If **any activity** is found: Repository is **preserved**
-
-### Logging
-- All actions are logged in the GitHub Actions run output
-- Deleted repositories include last activity date and type
-- Summary report shows total scanned, active, and deleted counts
-
-## Recovery
-
-Deleted repositories can be restored within **90 days**:
-
-1. Go to your organization settings
-2. Navigate to **Deleted repositories**
-3. Find the repository and click **Restore**
-
-## Monitoring
-
-### View Execution Logs
-1. Go to the **Actions** tab in this repository
-2. Click on "Support Repo Lifecycle Manager"
-3. Select the latest run to view detailed logs
-
-### Audit Trail
-GitHub maintains an audit log for repository deletions:
-- Organization settings → Audit log
-- Filter by action: `repo.destroy`
-
-## Configuration
-
-### Modify Inactivity Threshold
-Edit the workflow file and change:
-```yaml
-const INACTIVITY_THRESHOLD_DAYS = 14;
-```
-
-### Adjust Name Pattern
-Edit the workflow file and change:
-```yaml
-const REPO_NAME_PATTERN = /^\d{7}/;
-```
-
-### Change Schedule
-Edit the cron expression:
-```yaml
 on:
   schedule:
-    - cron: '0 0 * * *'  # Daily at midnight UTC
-```
+    # Run daily at 00:00 UTC
+    - cron: '0 0 * * *'
+  workflow_dispatch:
 
-Example schedules:
-- `0 */12 * * *` - Every 12 hours
-- `0 0 * * 1` - Every Monday at midnight
-- `0 2 * * *` - Daily at 2:00 AM UTC
-
-## Troubleshooting
-
-### Workflow isn't running
-- Verify the cron schedule syntax
-- Check that the workflow file is in the default branch
-- Ensure Actions are enabled for the repository
-
-### Permission errors
-- Verify `SRLM_TOKEN` has correct permissions
-- Check token hasn't expired
-- Ensure token has access to the organization
-
-### Repositories not being detected
-- Verify repository names start with at least 7 consecutive digits
-- Check `SRLM_ORG` variable is set correctly
-- Review workflow logs for filtering results
-
-## Security Considerations
-
-- The `SRLM_TOKEN` has organization-wide repository deletion rights
-- Limit workflow execution to trusted users
-- Regularly audit deleted repositories
-- Consider using GitHub App tokens for better security and auditing
-- Repository naming convention provides safety against accidental deletion
-
-## Support
-
-For issues or questions, review the workflow execution logs in the Actions tab for detailed information about each run.
+jobs:
+  cleanup-repos:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Cleanup stale support repositories
+        uses: actions/github-script@v7
+        with:
+          github-token: ${{ secrets.SRLM_TOKEN }}
+          script: |
+            const INACTIVITY_THRESHOLD_DAYS = 14;
+            const REPO_NAME_PATTERN = /^\d{7}/;
+            const org = '${{ vars.SRLM_ORG }}';
+            const isManualRun = '${{ github.event_name }}' === 'workflow_dispatch';
+            
+            // Calculate cutoff date (14 days ago from now)
+            const cutoffDate = new Date();
+            cutoffDate.setDate(cutoffDate.getDate() - INACTIVITY_THRESHOLD_DAYS);
+            
+            console.log(`🔍 Scanning organization: ${org}`);
+            console.log(`🚀 Run type: ${isManualRun ? 'MANUAL (delete all matching repos)' : 'SCHEDULED (check activity)'}`);
+            if (!isManualRun) {
+              console.log(`📅 Cutoff date: ${cutoffDate.toISOString()}`);
+            }
+            console.log(`🎯 Target pattern: Repository names starting with 7 digits`);
+            console.log('─'.repeat(80));
+            
+            // Fetch all repositories in the organization
+            const repos = await github.paginate(github.rest.repos.listForOrg, {
+              org: org,
+              type: 'all',
+              per_page: 100
+            });
+            
+            console.log(`📦 Found ${repos.length} total repositories in ${org}`);
+            
+            // Filter repos matching the naming pattern
+            const targetRepos = repos.filter(repo => REPO_NAME_PATTERN.test(repo.name));
+            console.log(`🎯 Found ${targetRepos.length} repositories matching pattern`);
+            console.log('─'.repeat(80));
+            
+            let deletedCount = 0;
+            let skippedCount = 0;
+            
+            for (const repo of targetRepos) {
+              console.log(`\n🔎 Checking: ${repo.name}`);
+              
+              try {
+                let shouldDelete = false;
+                let lastActivityDate = null;
+                let activityType = null;
+                
+                if (isManualRun) {
+                  // Manual run: delete all matching repos without checking activity
+                  console.log(`  🔥 MANUAL RUN - Deleting without activity check`);
+                  shouldDelete = true;
+                  lastActivityDate = repo.pushed_at || repo.updated_at || 'N/A';
+                } else {
+                  // Scheduled run: check for activity
+                  let hasRecentActivity = false;
+                  
+                  // 1. Check commits
+                  try {
+                    const commits = await github.rest.repos.listCommits({
+                      owner: org,
+                      repo: repo.name,
+                      since: cutoffDate.toISOString(),
+                      per_page: 1
+                    });
+                    
+                    if (commits.data.length > 0) {
+                      hasRecentActivity = true;
+                      lastActivityDate = commits.data[0].commit.committer.date;
+                      activityType = 'commit';
+                    }
+                  } catch (error) {
+                    // Empty repo or no commits - continue checking other activity
+                    console.log(`  ℹ️  No commits found (may be empty repo)`);
+                  }
+                  
+                  // 2. Check issues (comments, labels, state changes)
+                  if (!hasRecentActivity) {
+                    try {
+                      const issues = await github.rest.issues.listForRepo({
+                        owner: org,
+                        repo: repo.name,
+                        state: 'all',
+                        since: cutoffDate.toISOString(),
+                        per_page: 1
+                      });
+                      
+                      if (issues.data.length > 0) {
+                        hasRecentActivity = true;
+                        lastActivityDate = issues.data[0].updated_at;
+                        activityType = 'issue';
+                      }
+                    } catch (error) {
+                      console.log(`  ℹ️  Could not check issues: ${error.message}`);
+                    }
+                  }
+                  
+                  // 3. Check pull requests
+                  if (!hasRecentActivity) {
+                    try {
+                      const pulls = await github.rest.pulls.list({
+                        owner: org,
+                        repo: repo.name,
+                        state: 'all',
+                        sort: 'updated',
+                        direction: 'desc',
+                        per_page: 100
+                      });
+                      
+                      // Check if any PR was updated after cutoff
+                      const recentPRs = pulls.data.filter(pr => {
+                        const updatedAt = new Date(pr.updated_at);
+                        return updatedAt > cutoffDate;
+                      });
+                      
+                      if (recentPRs.length > 0) {
+                        hasRecentActivity = true;
+                        lastActivityDate = recentPRs[0].updated_at;
+                        activityType = 'pull request';
+                      }
+                    } catch (error) {
+                      console.log(`  ℹ️  Could not check pull requests: ${error.message}`);
+                    }
+                  }
+                  
+                  // Determine last activity from repo metadata if no specific activity found
+                  if (!lastActivityDate) {
+                    lastActivityDate = repo.pushed_at || repo.updated_at;
+                  }
+                  
+                  const daysSinceActivity = Math.floor(
+                    (new Date() - new Date(lastActivityDate)) / (1000 * 60 * 60 * 24)
+                  );
+                  
+                  if (hasRecentActivity) {
+                    console.log(`  ✅ ACTIVE - Last ${activityType}: ${lastActivityDate} (${daysSinceActivity} days ago)`);
+                    shouldDelete = false;
+                  } else {
+                    console.log(`  ❌ INACTIVE - Last activity: ${lastActivityDate} (${daysSinceActivity} days ago)`);
+                    shouldDelete = true;
+                  }
+                }
+                
+                if (shouldDelete) {
+                  console.log(`  🗑️  Deleting repository...`);
+                  
+                  await github.rest.repos.delete({
+                    owner: org,
+                    repo: repo.name
+                  });
+                  
+                  console.log(`  ✓ Deleted successfully`);
+                  deletedCount++;
+                } else {
+                  skippedCount++;
+                }
+                
+              } catch (error) {
+                console.error(`  ⚠️  Error processing ${repo.name}: ${error.message}`);
+                skippedCount++;
+              }
+            }
+            
+            console.log('\n' + '═'.repeat(80));
+            console.log('📊 SUMMARY');
+            console.log('═'.repeat(80));
+            console.log(`✅ Active repositories: ${skippedCount}`);
+            console.log(`🗑️  Deleted repositories: ${deletedCount}`);
+            console.log(`📦 Total checked: ${targetRepos.length}`);
+            console.log('═'.repeat(80));
+            
+            // Create job summary
+            const summaryTable = [
+              [{data: 'Metric', header: true}, {data: 'Count', header: true}],
+              ['Run Type', isManualRun ? 'Manual' : 'Scheduled'],
+              ['Organization', org],
+              ['Total Repositories Scanned', repos.length.toString()],
+              ['Matching Name Pattern', targetRepos.length.toString()],
+              ['Active (Preserved)', skippedCount.toString()],
+              ['Inactive (Deleted)', deletedCount.toString()]
+            ];
+            
+            if (!isManualRun) {
+              summaryTable.push(['Inactivity Threshold', `${INACTIVITY_THRESHOLD_DAYS} days`]);
+            }
+            
+            await core.summary
+              .addHeading('Support Repo Lifecycle Manager - Cleanup Report')
+              .addTable(summaryTable)
+              .write();
